@@ -714,6 +714,9 @@ function NovaAusenciaPage() {
       form.setValue("acidente_dias_afastamento_inicial", a_dias);
       form.setValue("acidente_cat_emitida", a_cat);
       form.setValue("acidente_observacoes", a_obs);
+      // Edição: a confirmação jurídica é exigida apenas no fluxo de NOVO lançamento.
+      // O checkbox não é exibido aqui, então satisfazemos o campo internamente.
+      form.setValue("legal_confirmacao", true as never, { shouldValidate: false });
       setPrefilled(true);
 
     })();
