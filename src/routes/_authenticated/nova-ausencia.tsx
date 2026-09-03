@@ -1673,10 +1673,8 @@ function NovaAusenciaPage() {
                             setTimeout(() => element.focus(), 600);
                           }
                         }
-                        
-                        toast.error("Revise os campos obrigatórios destacados antes de enviar.");
                       }
-                    });
+                    })(e);
                   }}
                   className="space-y-6"
                 >
