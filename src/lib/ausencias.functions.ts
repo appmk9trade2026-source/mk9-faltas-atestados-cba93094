@@ -8,13 +8,10 @@ export const updateAusencia = createServerFn({ method: "POST" })
     }
   })
   .handler(async ({ data, context }) => {
-    // ============================================================
-    // DIAGNÓSTICO DE BUILD / DEPLOY
-    // Se este log não aparecer no Lovable Cloud Logs durante
-    // uma edição, o domínio publicado está executando código antigo.
-    // ============================================================
+    const BUILD_VERSION = "2026-09-03-UPDATED-AT-V4";
+
     console.info("[MK9_UPDATE_BUILD]", {
-      version: "2026-09-03-UPDATED-AT-V3",
+      version: BUILD_VERSION,
       ausencia_id: data.id,
       user_id: context.userId,
     });
@@ -26,23 +23,48 @@ export const updateAusencia = createServerFn({ method: "POST" })
     // ============================================================
     // 1. CARREGAR REGISTRO ATUAL
     // ============================================================
+
     const { data: current, error: loadErr } = await context.supabase
       .from("ausencias")
       .select(
-        "id, empresa_id, projeto_id, colaborador_id, origem_registro, status, tipo, tipo_detalhe, dias, motivo, cid, data_inicio, data_fim, localidade, loja_codigo_nome, acidente_trabalho_trajeto, arquivo_url, arquivo_nome, arquivo_mime, arquivo_tamanho, hash_integridade, updated_at",
+        [
+          "id",
+          "empresa_id",
+          "projeto_id",
+          "colaborador_id",
+          "origem_registro",
+          "status",
+          "tipo",
+          "tipo_detalhe",
+          "dias",
+          "motivo",
+          "cid",
+          "data_inicio",
+          "data_fim",
+          "localidade",
+          "loja_codigo_nome",
+          "acidente_trabalho_trajeto",
+          "arquivo_url",
+          "arquivo_nome",
+          "arquivo_mime",
+          "arquivo_tamanho",
+          "hash_integridade",
+          "updated_at",
+        ].join(", "),
       )
       .eq("id", data.id)
       .maybeSingle();
 
     if (loadErr) {
       console.error("[MK9_UPDATE_LOAD_ERROR]", {
+        version: BUILD_VERSION,
         ausencia_id: data.id,
         code: loadErr.code ?? null,
         message: loadErr.message,
       });
 
       throw new Error(
-        `RESOURCE_NOT_FOUND: Não foi possível carregar a ausência para edição.`,
+        "RESOURCE_NOT_FOUND: Não foi possível carregar a ausência para edição.",
       );
     }
 
@@ -53,8 +75,9 @@ export const updateAusencia = createServerFn({ method: "POST" })
     }
 
     // ============================================================
-    // 2. GUARD DE STATUS
+    // 2. STATUS
     // ============================================================
+
     if (current.status !== "PENDENTE") {
       throw new Error(
         `CONFLICT: Este registro está com status ${current.status} e não está disponível para edição direta.`,
@@ -62,8 +85,9 @@ export const updateAusencia = createServerFn({ method: "POST" })
     }
 
     // ============================================================
-    // 3. ORIGEM É IMUTÁVEL
+    // 3. ORIGEM IMUTÁVEL
     // ============================================================
+
     if (
       (current.origem_registro ?? "AUTOMATICO") !==
       data.origem_registro
@@ -74,8 +98,9 @@ export const updateAusencia = createServerFn({ method: "POST" })
     }
 
     // ============================================================
-    // 4. COLABORADOR É IMUTÁVEL EM AUTOMÁTICO
+    // 4. COLABORADOR IMUTÁVEL EM AUTOMÁTICO
     // ============================================================
+
     if (
       !isManual &&
       data.colaborador_id !== current.colaborador_id
@@ -86,8 +111,9 @@ export const updateAusencia = createServerFn({ method: "POST" })
     }
 
     // ============================================================
-    // 5. EMPRESA/PROJETO SÃO IMUTÁVEIS EM MANUAL
+    // 5. EMPRESA/PROJETO IMUTÁVEIS EM MANUAL
     // ============================================================
+
     if (
       isManual &&
       (
@@ -103,6 +129,7 @@ export const updateAusencia = createServerFn({ method: "POST" })
     // ============================================================
     // 6. RBAC / ESCOPO
     // ============================================================
+
     const gate = await requirePermission({
       ctx: context,
       permission: PERMISSION_MAP.updateAbsence,
@@ -119,6 +146,7 @@ export const updateAusencia = createServerFn({ method: "POST" })
     });
 
     console.info("[MK9_UPDATE_GATE_PASS]", {
+      version: BUILD_VERSION,
       ausencia_id: data.id,
       correlation_id: gate.correlationId,
       empresa_id: gate.empresaId ?? null,
@@ -126,8 +154,9 @@ export const updateAusencia = createServerFn({ method: "POST" })
     });
 
     // ============================================================
-    // 7. HIDRATAR TIPO E PERÍODO
+    // 7. TIPO E PERÍODO
     // ============================================================
+
     const [tipoRes, opcaoRes] = await Promise.all([
       context.supabase
         .from("tipos_ausencia" as never)
@@ -167,12 +196,13 @@ export const updateAusencia = createServerFn({ method: "POST" })
     }
 
     // ============================================================
-    // 8. CALCULAR DATA FINAL
+    // 8. DATA FINAL
     // ============================================================
+
     const dias = opcao.quantidade_dias ?? 1;
 
     const dataFim = new Date(
-      data.data_inicio + "T00:00:00",
+      `${data.data_inicio}T00:00:00`,
     );
 
     dataFim.setDate(
@@ -194,6 +224,7 @@ export const updateAusencia = createServerFn({ method: "POST" })
     // ============================================================
     // 9. ACIDENTE DE TRABALHO
     // ============================================================
+
     const isAcidenteU =
       tipo.codigo === "ACIDENTE_TRABALHO";
 
@@ -211,13 +242,14 @@ export const updateAusencia = createServerFn({ method: "POST" })
     }
 
     // ============================================================
-    // 10. DADOS MANUAIS EDITÁVEIS
+    // 10. CAMPOS MANUAIS
     // ============================================================
+
     const manualUpdate = isManual
       ? (() => {
           const {
-            manual_registrado_por: _p,
-            manual_registrado_em: _e,
+            manual_registrado_por: _manualRegistradoPor,
+            manual_registrado_em: _manualRegistradoEm,
             ...rest
           } = manualColumns(
             data,
@@ -229,12 +261,9 @@ export const updateAusencia = createServerFn({ method: "POST" })
       : {};
 
     // ============================================================
-    // 11. PAYLOAD CANÔNICO DO UPDATE
-    //
-    // IMPORTANTE:
-    // NÃO EXISTE atualizado_em em public.ausencias.
-    // A coluna correta é updated_at.
+    // 11. PAYLOAD CANÔNICO
     // ============================================================
+
     const updatePayload = {
       ...manualUpdate,
 
@@ -248,7 +277,8 @@ export const updateAusencia = createServerFn({ method: "POST" })
       opcao_periodo_id:
         data.opcao_periodo_id,
 
-      motivo: data.motivo,
+      motivo:
+        data.motivo,
 
       data_inicio:
         data.data_inicio,
@@ -265,7 +295,7 @@ export const updateAusencia = createServerFn({ method: "POST" })
         data.loja_codigo_nome,
 
       cid:
-        data.cid && data.cid.trim()
+        data.cid?.trim()
           ? data.cid
               .trim()
               .toUpperCase()
@@ -296,22 +326,13 @@ export const updateAusencia = createServerFn({ method: "POST" })
         data.arquivo_tamanho ??
         current.arquivo_tamanho,
 
-      // ========================================================
-      // AUTORIA CANÔNICA
-      // ========================================================
       atualizado_por_usuario_id:
         context.userId,
 
-      // ========================================================
-      // TIMESTAMP CANÔNICO
-      // NÃO TROCAR POR atualizado_em
-      // ========================================================
+      // COLUNA CANÔNICA EXISTENTE NO BANCO.
       updated_at:
         new Date().toISOString(),
 
-      // ========================================================
-      // AUDITORIA FORENSE
-      // ========================================================
       operacao_origem:
         "WEB",
 
@@ -364,6 +385,7 @@ export const updateAusencia = createServerFn({ method: "POST" })
                     String(
                       data.acidente_dias_afastamento_inicial,
                     ),
+                    10,
                   ) || 0
                 : null,
 
@@ -378,9 +400,27 @@ export const updateAusencia = createServerFn({ method: "POST" })
         : {}),
     };
 
+    // ============================================================
+    // 12. SANITIZAÇÃO DEFENSIVA
+    //
+    // Mesmo que algum objeto intermediário futuro passe a carregar
+    // atualizado_em, ele NÃO será enviado ao PostgREST.
+    // ============================================================
+
+    const sanitizedUpdatePayload = {
+      ...updatePayload,
+    } as Record<string, unknown>;
+
+    delete sanitizedUpdatePayload.atualizado_em;
+
+    sanitizedUpdatePayload.updated_at =
+      new Date().toISOString();
+
+    sanitizedUpdatePayload.atualizado_por_usuario_id =
+      context.userId;
+
     console.info("[MK9_UPDATE_PAYLOAD]", {
-      version:
-        "2026-09-03-UPDATED-AT-V3",
+      version: BUILD_VERSION,
 
       ausencia_id:
         data.id,
@@ -388,43 +428,47 @@ export const updateAusencia = createServerFn({ method: "POST" })
       correlation_id:
         gate.correlationId,
 
-      payload_keys:
-        Object.keys(updatePayload),
-
       has_updated_at:
         Object.prototype.hasOwnProperty.call(
-          updatePayload,
+          sanitizedUpdatePayload,
           "updated_at",
         ),
 
       has_atualizado_em:
         Object.prototype.hasOwnProperty.call(
-          updatePayload,
+          sanitizedUpdatePayload,
           "atualizado_em",
+        ),
+
+      payload_keys:
+        Object.keys(
+          sanitizedUpdatePayload,
         ),
     });
 
     // ============================================================
-    // 12. HASH DE INTEGRIDADE
+    // 13. HASH DE INTEGRIDADE
     // ============================================================
+
     const newHash =
       calculateIntegrityHash(
-        updatePayload,
+        sanitizedUpdatePayload,
         current.hash_integridade,
       );
 
-    (updatePayload as any).hash_integridade =
+    sanitizedUpdatePayload.hash_integridade =
       newHash;
 
-    (updatePayload as any).hash_atual =
+    sanitizedUpdatePayload.hash_atual =
       newHash;
 
-    (updatePayload as any).hash_anterior =
+    sanitizedUpdatePayload.hash_anterior =
       current.hash_integridade;
 
     // ============================================================
-    // 13. AUDITORIA DE CAMPOS
+    // 14. AUDITORIA FIELD-LEVEL
     // ============================================================
+
     const fieldsToAudit = [
       "tipo_ausencia_id",
       "opcao_periodo_id",
@@ -448,15 +492,12 @@ export const updateAusencia = createServerFn({ method: "POST" })
         context.userId,
       );
 
-    for (
-      const field of
-      fieldsToAudit
-    ) {
+    for (const field of fieldsToAudit) {
       const oldVal =
         (current as any)[field];
 
       const newVal =
-        (updatePayload as any)[field];
+        sanitizedUpdatePayload[field];
 
       if (oldVal !== newVal) {
         audits.push({
@@ -498,6 +539,9 @@ export const updateAusencia = createServerFn({ method: "POST" })
         console.error(
           "[MK9_UPDATE_FIELD_AUDIT_ERROR]",
           {
+            version:
+              BUILD_VERSION,
+
             ausencia_id:
               data.id,
 
@@ -513,30 +557,21 @@ export const updateAusencia = createServerFn({ method: "POST" })
           },
         );
 
-        throw ausenciaDbError(
-          auditFieldError,
-          "update_ausencia",
-          gate.correlationId,
+        throw new Error(
+          `TECHNICAL_ERROR: Não foi possível registrar a auditoria da alteração. Código de suporte: ${gate.correlationId}`,
         );
       }
     }
 
     // ============================================================
-    // 14. UPDATE REAL
+    // 15. UPDATE NO BANCO
     // ============================================================
-    console.info(
-      "[MK9_UPDATE_DB_START]",
-      {
-        version:
-          "2026-09-03-UPDATED-AT-V3",
 
-        ausencia_id:
-          data.id,
-
-        correlation_id:
-          gate.correlationId,
-      },
-    );
+    console.info("[MK9_UPDATE_DB_START]", {
+      version: BUILD_VERSION,
+      ausencia_id: data.id,
+      correlation_id: gate.correlationId,
+    });
 
     const {
       data: updated,
@@ -544,7 +579,7 @@ export const updateAusencia = createServerFn({ method: "POST" })
     } = await context.supabase
       .from("ausencias")
       .update(
-        updatePayload as never,
+        sanitizedUpdatePayload as never,
       )
       .eq(
         "id",
@@ -564,7 +599,7 @@ export const updateAusencia = createServerFn({ method: "POST" })
         "[MK9_UPDATE_DB_ERROR]",
         {
           version:
-            "2026-09-03-UPDATED-AT-V3",
+            BUILD_VERSION,
 
           ausencia_id:
             data.id,
@@ -586,6 +621,18 @@ export const updateAusencia = createServerFn({ method: "POST" })
           hint:
             error.hint ??
             null,
+
+          has_atualizado_em:
+            Object.prototype.hasOwnProperty.call(
+              sanitizedUpdatePayload,
+              "atualizado_em",
+            ),
+
+          has_updated_at:
+            Object.prototype.hasOwnProperty.call(
+              sanitizedUpdatePayload,
+              "updated_at",
+            ),
         },
       );
 
@@ -596,10 +643,17 @@ export const updateAusencia = createServerFn({ method: "POST" })
       );
     }
 
+    // ============================================================
+    // 16. ZERO ROW GUARD
+    // ============================================================
+
     if (!updated) {
       console.warn(
         "[MK9_UPDATE_ZERO_ROW]",
         {
+          version:
+            BUILD_VERSION,
+
           ausencia_id:
             data.id,
 
@@ -616,29 +670,26 @@ export const updateAusencia = createServerFn({ method: "POST" })
       );
     }
 
-    console.info(
-      "[MK9_UPDATE_DB_SUCCESS]",
-      {
-        version:
-          "2026-09-03-UPDATED-AT-V3",
+    console.info("[MK9_UPDATE_DB_SUCCESS]", {
+      version: BUILD_VERSION,
 
-        ausencia_id:
-          updated.id,
+      ausencia_id:
+        updated.id,
 
-        status:
-          updated.status,
+      status:
+        updated.status,
 
-        updated_at:
-          updated.updated_at,
+      updated_at:
+        updated.updated_at,
 
-        correlation_id:
-          gate.correlationId,
-      },
-    );
+      correlation_id:
+        gate.correlationId,
+    });
 
     // ============================================================
-    // 15. AUDITORIA PRINCIPAL
+    // 17. AUDITORIA PRINCIPAL
     // ============================================================
+
     await audit(
       context.supabase,
       "AUSENCIA_EDITADA",
@@ -682,25 +733,25 @@ export const updateAusencia = createServerFn({ method: "POST" })
           tipo.nome,
 
         motivo:
-          updatePayload.motivo,
+          sanitizedUpdatePayload.motivo,
 
         cid:
-          updatePayload.cid,
+          sanitizedUpdatePayload.cid,
 
         data_inicio:
-          updatePayload.data_inicio,
+          sanitizedUpdatePayload.data_inicio,
 
         data_fim:
-          updatePayload.data_fim,
+          sanitizedUpdatePayload.data_fim,
 
         localidade:
-          updatePayload.localidade,
+          sanitizedUpdatePayload.localidade,
 
         loja_codigo_nome:
-          updatePayload.loja_codigo_nome,
+          sanitizedUpdatePayload.loja_codigo_nome,
 
         acidente_trabalho_trajeto:
-          updatePayload.acidente_trabalho_trajeto,
+          sanitizedUpdatePayload.acidente_trabalho_trajeto,
       },
 
       "edição",
@@ -711,15 +762,16 @@ export const updateAusencia = createServerFn({ method: "POST" })
     );
 
     // ============================================================
-    // 16. NOTIFICAÇÃO
+    // 18. NOTIFICAÇÕES
     // ============================================================
+
     const mudancaRelevante =
       current.data_inicio !==
-        updatePayload.data_inicio ||
+        sanitizedUpdatePayload.data_inicio ||
       current.data_fim !==
-        updatePayload.data_fim ||
+        sanitizedUpdatePayload.data_fim ||
       current.tipo_detalhe !==
-        updatePayload.tipo_detalhe;
+        sanitizedUpdatePayload.tipo_detalhe;
 
     if (mudancaRelevante) {
       await enfileirarNotificacoesAusencia({
@@ -741,8 +793,9 @@ export const updateAusencia = createServerFn({ method: "POST" })
     }
 
     // ============================================================
-    // 17. SUCESSO
+    // 19. SUCESSO
     // ============================================================
+
     return {
       ok: true,
 
@@ -759,6 +812,6 @@ export const updateAusencia = createServerFn({ method: "POST" })
         gate.correlationId,
 
       build:
-        "2026-09-03-UPDATED-AT-V3",
+        BUILD_VERSION,
     };
   });
