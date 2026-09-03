@@ -753,6 +753,7 @@ export const updateAusencia = createServerFn({ method: "POST" })
     if (loadErr) throw new Error(`RESOURCE_NOT_FOUND: ${loadErr.message}`);
     if (!current) throw new Error("RESOURCE_NOT_FOUND: ausência não encontrada");
     if (current.status === "LANCADO") throw new Error("CONFLICT: registro já foi lançado e não pode ser alterado");
+    if (current.status !== "PENDENTE") throw new Error("CONFLICT: Este registro não está disponível para edição direta.");
     // Origem é imutável — evita converter manual↔automático e burlar escopo.
     if ((current.origem_registro ?? "AUTOMATICO") !== data.origem_registro) {
       throw new Error("INVALID_PAYLOAD: a origem do registro não pode ser alterada");
