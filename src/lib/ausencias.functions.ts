@@ -832,9 +832,9 @@ export const updateAusencia = createServerFn({ method: "POST" })
       arquivo_nome: data.arquivo_nome ?? current.arquivo_nome,
       arquivo_mime: data.arquivo_mime ?? current.arquivo_mime,
       arquivo_tamanho: data.arquivo_tamanho ?? current.arquivo_tamanho,
-      // Novos campos de autoria
+      // Autoria da atualização (colunas canônicas existentes)
       atualizado_por_usuario_id: context.userId,
-      atualizado_em: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
 
       // Auditoria Forense - Etapa 1, 2 e 3
       operacao_origem: "WEB",
