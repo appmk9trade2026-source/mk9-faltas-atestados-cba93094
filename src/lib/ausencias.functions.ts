@@ -8,7 +8,7 @@ export const updateAusencia = createServerFn({ method: "POST" })
     }
   })
   .handler(async ({ data, context }) => {
-    const BUILD_VERSION = "2026-09-03-UPDATED-AT-V4";
+    const BUILD_VERSION = "2026-09-03-UPDATED-AT-V5";
 
     console.info("[MK9_UPDATE_BUILD]", {
       version: BUILD_VERSION,
@@ -61,6 +61,8 @@ export const updateAusencia = createServerFn({ method: "POST" })
         ausencia_id: data.id,
         code: loadErr.code ?? null,
         message: loadErr.message,
+        details: loadErr.details ?? null,
+        hint: loadErr.hint ?? null,
       });
 
       throw new Error(
@@ -76,6 +78,7 @@ export const updateAusencia = createServerFn({ method: "POST" })
 
     // ============================================================
     // 2. STATUS
+    // Apenas registros PENDENTE podem ser alterados diretamente.
     // ============================================================
 
     if (current.status !== "PENDENTE") {
@@ -98,7 +101,7 @@ export const updateAusencia = createServerFn({ method: "POST" })
     }
 
     // ============================================================
-    // 4. COLABORADOR IMUTÁVEL EM AUTOMÁTICO
+    // 4. COLABORADOR IMUTÁVEL EM REGISTRO AUTOMÁTICO
     // ============================================================
 
     if (
@@ -111,7 +114,7 @@ export const updateAusencia = createServerFn({ method: "POST" })
     }
 
     // ============================================================
-    // 5. EMPRESA/PROJETO IMUTÁVEIS EM MANUAL
+    // 5. EMPRESA/PROJETO IMUTÁVEIS EM REGISTRO MANUAL
     // ============================================================
 
     if (
@@ -154,7 +157,7 @@ export const updateAusencia = createServerFn({ method: "POST" })
     });
 
     // ============================================================
-    // 7. TIPO E PERÍODO
+    // 7. CARREGAR TIPO E PERÍODO
     // ============================================================
 
     const [tipoRes, opcaoRes] = await Promise.all([
@@ -171,6 +174,32 @@ export const updateAusencia = createServerFn({ method: "POST" })
         .maybeSingle(),
     ]);
 
+    if (tipoRes.error) {
+      console.error("[MK9_UPDATE_TIPO_ERROR]", {
+        version: BUILD_VERSION,
+        ausencia_id: data.id,
+        correlation_id: gate.correlationId,
+        message: tipoRes.error.message,
+      });
+
+      throw new Error(
+        `TECHNICAL_ERROR: Não foi possível validar o tipo da ausência. Código de suporte: ${gate.correlationId}`,
+      );
+    }
+
+    if (opcaoRes.error) {
+      console.error("[MK9_UPDATE_PERIODO_ERROR]", {
+        version: BUILD_VERSION,
+        ausencia_id: data.id,
+        correlation_id: gate.correlationId,
+        message: opcaoRes.error.message,
+      });
+
+      throw new Error(
+        `TECHNICAL_ERROR: Não foi possível validar o período da ausência. Código de suporte: ${gate.correlationId}`,
+      );
+    }
+
     const tipo = tipoRes.data as {
       codigo: string;
       nome: string;
@@ -185,7 +214,7 @@ export const updateAusencia = createServerFn({ method: "POST" })
 
     if (!tipo?.ativo) {
       throw new Error(
-        "INVALID_PAYLOAD: tipo inválido",
+        "INVALID_PAYLOAD: tipo inválido ou inativo",
       );
     }
 
@@ -196,7 +225,7 @@ export const updateAusencia = createServerFn({ method: "POST" })
     }
 
     // ============================================================
-    // 8. DATA FINAL
+    // 8. CALCULAR DATA FINAL
     // ============================================================
 
     const dias = opcao.quantidade_dias ?? 1;
@@ -262,6 +291,11 @@ export const updateAusencia = createServerFn({ method: "POST" })
 
     // ============================================================
     // 11. PAYLOAD CANÔNICO
+    //
+    // public.ausencias:
+    // ✅ updated_at
+    // ✅ atualizado_por_usuario_id
+    // ❌ atualizado_em
     // ============================================================
 
     const updatePayload = {
@@ -329,7 +363,6 @@ export const updateAusencia = createServerFn({ method: "POST" })
       atualizado_por_usuario_id:
         context.userId,
 
-      // COLUNA CANÔNICA EXISTENTE NO BANCO.
       updated_at:
         new Date().toISOString(),
 
@@ -402,15 +435,14 @@ export const updateAusencia = createServerFn({ method: "POST" })
 
     // ============================================================
     // 12. SANITIZAÇÃO DEFENSIVA
-    //
-    // Mesmo que algum objeto intermediário futuro passe a carregar
-    // atualizado_em, ele NÃO será enviado ao PostgREST.
     // ============================================================
 
     const sanitizedUpdatePayload = {
       ...updatePayload,
     } as Record<string, unknown>;
 
+    // Guardrail crítico:
+    // essa coluna NÃO existe em public.ausencias.
     delete sanitizedUpdatePayload.atualizado_em;
 
     sanitizedUpdatePayload.updated_at =
@@ -419,14 +451,31 @@ export const updateAusencia = createServerFn({ method: "POST" })
     sanitizedUpdatePayload.atualizado_por_usuario_id =
       context.userId;
 
+    // ============================================================
+    // 13. ASSERTIVA DE CONTRATO
+    // ============================================================
+
+    if (
+      Object.prototype.hasOwnProperty.call(
+        sanitizedUpdatePayload,
+        "atualizado_em",
+      )
+    ) {
+      console.error("[MK9_UPDATE_SCHEMA_GUARD_FAIL]", {
+        version: BUILD_VERSION,
+        ausencia_id: data.id,
+        correlation_id: gate.correlationId,
+      });
+
+      throw new Error(
+        `TECHNICAL_ERROR: Payload incompatível com o schema de ausências. Código de suporte: ${gate.correlationId}`,
+      );
+    }
+
     console.info("[MK9_UPDATE_PAYLOAD]", {
       version: BUILD_VERSION,
-
-      ausencia_id:
-        data.id,
-
-      correlation_id:
-        gate.correlationId,
+      ausencia_id: data.id,
+      correlation_id: gate.correlationId,
 
       has_updated_at:
         Object.prototype.hasOwnProperty.call(
@@ -447,7 +496,7 @@ export const updateAusencia = createServerFn({ method: "POST" })
     });
 
     // ============================================================
-    // 13. HASH DE INTEGRIDADE
+    // 14. HASH DE INTEGRIDADE
     // ============================================================
 
     const newHash =
@@ -466,7 +515,7 @@ export const updateAusencia = createServerFn({ method: "POST" })
       current.hash_integridade;
 
     // ============================================================
-    // 14. AUDITORIA FIELD-LEVEL
+    // 15. AUDITORIA FIELD-LEVEL
     // ============================================================
 
     const fieldsToAudit = [
@@ -484,7 +533,7 @@ export const updateAusencia = createServerFn({ method: "POST" })
       "arquivo_url",
     ];
 
-    const audits = [];
+    const audits: Array<Record<string, unknown>> = [];
 
     const snapshot =
       await getSnapshot(
@@ -517,10 +566,10 @@ export const updateAusencia = createServerFn({ method: "POST" })
             context.userId,
 
           responsavel_nome:
-            snapshot?.nome,
+            snapshot?.nome ?? null,
 
           responsavel_papel:
-            snapshot?.papel,
+            snapshot?.papel ?? null,
 
           correlation_id:
             gate.correlationId,
@@ -533,7 +582,7 @@ export const updateAusencia = createServerFn({ method: "POST" })
         error: auditFieldError,
       } = await context.supabase
         .from("ausencia_field_audit")
-        .insert(audits);
+        .insert(audits as never);
 
       if (auditFieldError) {
         console.error(
@@ -554,6 +603,14 @@ export const updateAusencia = createServerFn({ method: "POST" })
 
             message:
               auditFieldError.message,
+
+            details:
+              auditFieldError.details ??
+              null,
+
+            hint:
+              auditFieldError.hint ??
+              null,
           },
         );
 
@@ -564,13 +621,24 @@ export const updateAusencia = createServerFn({ method: "POST" })
     }
 
     // ============================================================
-    // 15. UPDATE NO BANCO
+    // 16. UPDATE REAL
     // ============================================================
 
     console.info("[MK9_UPDATE_DB_START]", {
-      version: BUILD_VERSION,
-      ausencia_id: data.id,
-      correlation_id: gate.correlationId,
+      version:
+        BUILD_VERSION,
+
+      ausencia_id:
+        data.id,
+
+      correlation_id:
+        gate.correlationId,
+
+      has_updated_at:
+        "updated_at" in sanitizedUpdatePayload,
+
+      has_atualizado_em:
+        "atualizado_em" in sanitizedUpdatePayload,
     });
 
     const {
@@ -644,7 +712,7 @@ export const updateAusencia = createServerFn({ method: "POST" })
     }
 
     // ============================================================
-    // 16. ZERO ROW GUARD
+    // 17. ZERO ROW GUARD
     // ============================================================
 
     if (!updated) {
@@ -671,7 +739,8 @@ export const updateAusencia = createServerFn({ method: "POST" })
     }
 
     console.info("[MK9_UPDATE_DB_SUCCESS]", {
-      version: BUILD_VERSION,
+      version:
+        BUILD_VERSION,
 
       ausencia_id:
         updated.id,
@@ -687,7 +756,7 @@ export const updateAusencia = createServerFn({ method: "POST" })
     });
 
     // ============================================================
-    // 17. AUDITORIA PRINCIPAL
+    // 18. AUDITORIA PRINCIPAL
     // ============================================================
 
     await audit(
@@ -762,7 +831,7 @@ export const updateAusencia = createServerFn({ method: "POST" })
     );
 
     // ============================================================
-    // 18. NOTIFICAÇÕES
+    // 19. NOTIFICAÇÕES
     // ============================================================
 
     const mudancaRelevante =
@@ -793,7 +862,7 @@ export const updateAusencia = createServerFn({ method: "POST" })
     }
 
     // ============================================================
-    // 19. SUCESSO
+    // 20. SUCESSO
     // ============================================================
 
     return {
