@@ -714,6 +714,9 @@ function NovaAusenciaPage() {
       form.setValue("acidente_dias_afastamento_inicial", a_dias);
       form.setValue("acidente_cat_emitida", a_cat);
       form.setValue("acidente_observacoes", a_obs);
+      // Edição: a confirmação jurídica é exigida apenas no fluxo de NOVO lançamento.
+      // O checkbox não é exibido aqui, então satisfazemos o campo internamente.
+      form.setValue("legal_confirmacao", true as never, { shouldValidate: false });
       setPrefilled(true);
 
     })();
@@ -1651,9 +1654,14 @@ function NovaAusenciaPage() {
                       }
                       console.log("[P0-DIAGNOSTIC] Iniciando mutate com os valores:", v);
                       salvarMut.mutate(v);
-                    })(e).catch(() => {
+                    }, (errors) => {
+                      console.warn(isEdit ? "[EditarAusencia] Formulário inválido" : "[NovaAusencia] Formulário inválido", Object.keys(errors));
+                      toast.error(
+                        isEdit ? "Não foi possível salvar as alterações." : "Não foi possível enviar o lançamento.",
+                        { description: "Revise os campos obrigatórios destacados na tela." },
+                      );
                       // Scroll to first error
-                      const firstError = Object.keys(form.formState.errors)[0];
+                      const firstError = Object.keys(errors)[0];
                       if (firstError) {
                         const element = document.querySelector(`[name="${firstError}"]`) || 
                                        document.querySelector(`[id="${firstError}"]`) ||
@@ -1665,10 +1673,8 @@ function NovaAusenciaPage() {
                             setTimeout(() => element.focus(), 600);
                           }
                         }
-                        
-                        toast.error("Revise os campos obrigatórios destacados antes de enviar.");
                       }
-                    });
+                    })(e);
                   }}
                   className="space-y-6"
                 >

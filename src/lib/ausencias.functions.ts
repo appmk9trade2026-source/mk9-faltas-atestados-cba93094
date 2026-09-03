@@ -753,6 +753,7 @@ export const updateAusencia = createServerFn({ method: "POST" })
     if (loadErr) throw new Error(`RESOURCE_NOT_FOUND: ${loadErr.message}`);
     if (!current) throw new Error("RESOURCE_NOT_FOUND: ausência não encontrada");
     if (current.status === "LANCADO") throw new Error("CONFLICT: registro já foi lançado e não pode ser alterado");
+    if (current.status !== "PENDENTE") throw new Error("CONFLICT: Este registro não está disponível para edição direta.");
     // Origem é imutável — evita converter manual↔automático e burlar escopo.
     if ((current.origem_registro ?? "AUTOMATICO") !== data.origem_registro) {
       throw new Error("INVALID_PAYLOAD: a origem do registro não pode ser alterada");
@@ -896,13 +897,18 @@ export const updateAusencia = createServerFn({ method: "POST" })
 
 
 
-    const { error } = await context.supabase
+    const { data: updated, error } = await context.supabase
       .from("ausencias")
       .update(updatePayload as never)
       .eq("id", data.id)
-      .eq("status", "PENDENTE");
+      .eq("status", "PENDENTE")
+      .select("id, status")
+      .maybeSingle();
     if (error) {
       throw ausenciaDbError(error, "update_ausencia", gate.correlationId);
+    }
+    if (!updated) {
+      throw new Error("CONFLICT: Este registro não está mais disponível para edição. Atualize a página e verifique o status atual.");
     }
 
     await audit(context.supabase, "AUSENCIA_EDITADA", data.id, gate.correlationId,
