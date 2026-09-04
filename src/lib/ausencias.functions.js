@@ -682,9 +682,10 @@ export const updateAusencia = createServerFn({ method: "POST" })
         arquivo_nome: data.arquivo_nome ?? current.arquivo_nome,
         arquivo_mime: data.arquivo_mime ?? current.arquivo_mime,
         arquivo_tamanho: data.arquivo_tamanho ?? current.arquivo_tamanho,
-        // Novos campos de autoria
+        // Autoria da última alteração. A tabela usa `updated_at` como timestamp
+        // canônico; `atualizado_em` não existe no schema de ausências.
         atualizado_por_usuario_id: context.userId,
-        atualizado_em: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
         // Auditoria Forense - Etapa 1, 2 e 3
         operacao_origem: "WEB",
         operacao_ip: meta.ip,
@@ -736,13 +737,18 @@ export const updateAusencia = createServerFn({ method: "POST" })
     if (audits.length > 0) {
         await context.supabase.from("ausencia_field_audit").insert(audits);
     }
-    const { error } = await context.supabase
+    const { data: updated, error } = await context.supabase
         .from("ausencias")
         .update(updatePayload)
         .eq("id", data.id)
-        .eq("status", "PENDENTE");
+        .eq("status", "PENDENTE")
+        .select("id, status, updated_at")
+        .maybeSingle();
     if (error) {
         throw ausenciaDbError(error, "update_ausencia", gate.correlationId);
+    }
+    if (!updated) {
+        throw new Error("CONFLICT: Este registro não está mais disponível para edição. Atualize a página e tente novamente.");
     }
     await audit(context.supabase, "AUSENCIA_EDITADA", data.id, gate.correlationId, { tipo: current.tipo, tipo_detalhe: current.tipo_detalhe, motivo: current.motivo, cid: current.cid, data_inicio: current.data_inicio, data_fim: current.data_fim, localidade: current.localidade, loja_codigo_nome: current.loja_codigo_nome, acidente_trabalho_trajeto: current.acidente_trabalho_trajeto }, { tipo: tipoBase, tipo_detalhe: tipo.nome, motivo: updatePayload.motivo, cid: updatePayload.cid, data_inicio: updatePayload.data_inicio, data_fim: updatePayload.data_fim, localidade: updatePayload.localidade, loja_codigo_nome: updatePayload.loja_codigo_nome, acidente_trabalho_trajeto: updatePayload.acidente_trabalho_trajeto }, "edição", gate.empresaId, gate.projetoId, context.userId);
     // 8. Notificações (apenas se houver mudança relevante)
@@ -758,7 +764,13 @@ export const updateAusencia = createServerFn({ method: "POST" })
             userId: gate.userId,
         });
     }
-    return { ok: true, correlation_id: gate.correlationId };
+    return {
+        ok: true,
+        id: updated.id,
+        status: updated.status,
+        updated_at: updated.updated_at,
+        correlation_id: gate.correlationId,
+    };
 });
 // ==================== DELETE (Lógica) ====================
 const deleteSchema = z.object({
